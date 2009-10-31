@@ -1,0 +1,39 @@
+The libnss_map module
+=====================
+
+The libnss_map module is a NSS library to map user credentials to existent
+user in the system. This module is intended to be used in high virtualized
+environment like cloud computing or embedded systems which require a lot of
+users.
+
+When a new user has been authenticated by PAM or other authentication
+mechanism, then the nss_map module create a virtual user when credentials
+mapped to an existent user. For example, suppose here are a user virtual,
+created a la standard way on /etc/passwd:
+
+    virtual:x:15000:15000:virtual user for nss_map:/dev/null:/sbin/nologin
+
+Then edit the /etc/nssmap.conf
+file:
+
+    virtual:x:15000:15000:virtual user for nss_map:/home/virtual:/bin/bash
+
+Note that the user directory is really a base dir in nssmap, each new user
+can search their home in ``/home/virtual/logname'', where logname is the
+name used by user to login, and the /home/virtual is the prefix setted in
+nssmap.conf.
+
+What about mapped groups? nss_map support mapped roles as groups. It's
+useful to maintain a list of roles in your systems, like operators,
+sysadmins, dbas etc. The first try is to add the virtual user to a number of
+groups in the usual way, so all users extends this groups. On the other hand
+if you need a more granular group control you need to use a per user
+nss_map configuration.
+
+The file ``~/.nssmaprc'' on home dir (i.e. the base dir plus the logname) of
+the user can contain a single mapping for groups. This file is a plaintext
+file owner by root:root with 400 permissions which contain a list of group
+names (one per line) to bind to this user.
+
+Enjoy!
+

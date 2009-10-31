@@ -1,26 +1,27 @@
-/*
- * libnss_map.c
+/**
+ * libnss_map;  http://connectical.com/projects/libnss_map
+ * Copyright 2009 Connectical Technologies; Distributed under GPL.
+ * --
+ * A nss module which maps all users and groups to one system user/group
+ * specified in configuration file.
+ * --
+ * Copyright (C) 2009  Andrés J. Díaz <ajdiaz@connectical.com>
  *
- * nss module to map every requested user to a fixed one.
- * map is All To One as all users get mapped to one
- * predefined user
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation; only version 2 of the License is applicable.
  *
- * Copyright (c) Pietro Donatini, 2007.
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
  *
- * this product may be distributed under the terms of
- * the GNU Lesser Public License.
- *
- * version 0.2 
- * 
- * CHANGELOG:
- * strip end of line in reading /etc/libnss-map 
- * suggested by Kyler Laird
- *
- * TODO:
- *
- * check bugs
- * 
- */
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+ * --
+ * This work is heavly based on nss_ato module by Pietro Donatini.
+ **/
 
 #include <nss.h>
 #include <pwd.h>
@@ -29,15 +30,14 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-/* #include <syslog.h> */
-
 /* for security reasons */
 #define MIN_UID_NUMBER   500
 #define MIN_GID_NUMBER   500
-#define CONF_FILE "/etc/libnss-map.conf"
+#define MAIN_CONF_FILE   PREFIX#"/etc/libnss_map.conf"
 
-/* 
- * The passwd structure in <pwd.h>
+/*
+This comment is a little remember note :D
+
 struct passwd
 {
 	char *pw_name;                Username. 
@@ -48,6 +48,16 @@ struct passwd
 	char *pw_dir;                 Home directory.
 	char *pw_shell;               Shell program. 
 };
+
+group structure in <grp.h>
+
+struct group {
+	char   *gr_name;       // group name
+    char   *gr_passwd;     // group password
+    gid_t   gr_gid;        // group ID
+    char  **gr_mem;        // group members
+};
+
 
 shadow passwd structure in <shadow.h>
 
@@ -66,37 +76,42 @@ struct spwd
 
 */
 
-/*  What can be configured in /etc/libnss-map.conf */
-typedef struct map_conf {
+/*  What can be configured in passwd configuration files */
+typedef struct _map_conf_s {
 	char *pw_name;
 	char *pw_gecos;
 	char *pw_dir;
 	char *pw_shell;
-	__uid_t pw_uid; 
-	__gid_t pw_gid; 
+	__uid_t pw_uid;
+	__gid_t pw_gid;
 } map_conf_t;
 
-/* constructor */
+/* fun: new_conf
+ * txt: get a new empty configuration type */
 map_conf_t *
-new_conf()
+new_conf(void)
 {
 	map_conf_t *conf;
 
 	if ((conf = (map_conf_t *) malloc(sizeof (map_conf_t))) == NULL) 
 	    return NULL;
 
-	conf->pw_name  = NULL;
-	conf->pw_gecos = NULL;
-	conf->pw_dir   = NULL;
-	conf->pw_shell = NULL;
-	
-	return conf;
-}	
+	conf->pw_name   = NULL;
+	conf->pw_gecos  = NULL;
+	conf->pw_dir    = NULL;
+	conf->pw_shell  = NULL;
 
-/* destructor */
-int 
+	return conf;
+}
+
+/* fun: free_conf conf
+ * txt: delete and free memory associated with configuration struct called
+ *      conf. */
+int
 free_conf(map_conf_t *conf) 
 {
+	char *p;
+
 	if ( conf->pw_name != NULL )
 		free(conf->pw_name);
 	if ( conf->pw_gecos != NULL )
@@ -124,6 +139,7 @@ read_conf()
 	char buff[BUFSIZ];
 	char *b;
 	char *value;
+	char t;
 
 	if ((conf = new_conf()) == NULL) 
 	    return NULL;
@@ -143,7 +159,7 @@ read_conf()
 
 	/* start reading configuration file */
 	b = buff;
-  
+
 	/* pw_name */
 	value = b;
        
@@ -155,7 +171,7 @@ read_conf()
   
 	*b = '\0';
 	b++;
-	
+
 	conf->pw_name = strdup(value);
   
 	/* NOT USED pw_passwd will be set equal to  x (we like shadows) */
