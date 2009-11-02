@@ -34,7 +34,10 @@ switchable mechanism.
 The file ``~/.nssmaprc'' on home dir (i.e. the base dir plus the logname) of
 the user can contain a single mapping for groups. This file is a plaintext
 file owner by root:root with 400 permissions which contain a list of group
-names (one per line) to bind to this user.
+names in the form of classic ``/etc/group'':
+
+    wheel:x:10:usera
+
 
 Security considerations
 -----------------------
@@ -44,11 +47,20 @@ safety:
 
 1. Don't use group maps if it's don't required.
 2. If you need group maps then be sure that the ``~/.nssmaprc'' file has
-   0400 permissions are it's owner is root.
+   0644 permissions are it's owner is root.
 3. The LOGNAME environment variable is used by nss_map to get the currently
    user name to put on file listing or process list. Also the same variable
    is used by nss_map to map group, so check that the LOGNAME variable is 
    readonly for user process.
+
+About compilation
+-----------------
+If you need to enable debug support only put the following line on config.mk
+file at the top path of libnss_map source code:
+
+    $ cat > config.mk <<EOF
+    CFLAGS += -DDEBUG
+    EOF
 
 Enjoy!
 
