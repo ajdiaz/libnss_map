@@ -28,12 +28,27 @@ useful to maintain a list of roles in your systems, like operators,
 sysadmins, dbas etc. The first try is to add the virtual user to a number of
 groups in the usual way, so all users extends this groups. On the other hand
 if you need a more granular group control you need to use a per user
-nss_map configuration.
+nss_map configuration. Obviously the groups must be exists on any nss
+switchable mechanism.
 
 The file ``~/.nssmaprc'' on home dir (i.e. the base dir plus the logname) of
 the user can contain a single mapping for groups. This file is a plaintext
 file owner by root:root with 400 permissions which contain a list of group
 names (one per line) to bind to this user.
+
+Security considerations
+-----------------------
+The security is not the main focus of nss_map, so bugs and exploits will be
+available soon, get are some easy-to-remember rules to keep your maps
+safety:
+
+1. Don't use group maps if it's don't required.
+2. If you need group maps then be sure that the ``~/.nssmaprc'' file has
+   0400 permissions are it's owner is root.
+3. The LOGNAME environment variable is used by nss_map to get the currently
+   user name to put on file listing or process list. Also the same variable
+   is used by nss_map to map group, so check that the LOGNAME variable is 
+   readonly for user process.
 
 Enjoy!
 

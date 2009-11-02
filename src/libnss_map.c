@@ -23,12 +23,23 @@
  * This work is heavly based on nss_ato module by Pietro Donatini.
  **/
 
+#include <sys/param.h>
+#include <errno.h>
+#include <grp.h>
 #include <nss.h>
+#include <pthread.h>
 #include <pwd.h>
 #include <shadow.h>
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+/* yeahh, a mutex! */
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static FILE *g_file;
 
 /* for security reasons */
 #ifndef MIN_UID_NUMER
@@ -39,6 +50,18 @@
 #endif
 #ifndef MAIN_CONF_FILE
 #	define MAIN_CONF_FILE   "/etc/nssmap.conf"
+#endif
+#ifndef USER_CONF_FILE
+#	define USER_CONF_FILE ".nssmaprc"
+#endif
+#ifndef NGROUPS_MAX
+#	define NGROUPS_MAX 256
+#endif
+#ifdef DEBUG
+#	undef DEBUG /* remove previous definition */
+#	define DEBUG(fmt, args...) fprintf(stderr, fmt, ##args)
+#else
+#	define DEBUG(fmt, ...)
 #endif
 
 /*
@@ -92,9 +115,10 @@ typedef struct _map_conf_s {
 	__gid_t pw_gid;
 } map_conf_t;
 
+
 /* fun: new_conf
  * txt: get a new empty configuration type */
-	map_conf_t *
+map_conf_t *
 new_conf(void)
 {
 	map_conf_t *conf;
@@ -110,10 +134,34 @@ new_conf(void)
 	return conf;
 }
 
+/* Common return code routine for all *ent_r_locked functions.
+ * We need to return TRYAGAIN if the underlying files guy raises ERANGE,
+ * so that our caller knows to try again with a bigger buffer.
+ */
+
+static inline enum nss_status
+_nss_map_ent_bad_return_code(int errnop) {
+	enum nss_status ret;
+
+	switch (errnop) {
+		case ERANGE:
+			DEBUG("%s:%d:bad_return:ERANGE:try again with a bigger buffer\n",
+					__FILE__, __LINE__);
+			ret = NSS_STATUS_TRYAGAIN;
+			break;
+		case ENOENT:
+		default:
+			DEBUG("%s:%d:bad_return:ENOENT/default:not found more.\n",
+					__FILE__, __LINE__);
+			ret = NSS_STATUS_NOTFOUND;
+	};
+	return ret;
+}
+
 /* fun: free_conf conf
  * txt: delete and free memory associated with configuration struct called
  *      conf. */
-	int
+int
 free_conf(map_conf_t *conf) 
 {
 	if ( conf->pw_name != NULL )
@@ -135,11 +183,11 @@ free_conf(map_conf_t *conf)
  * dona:x:1001:1001:P D ,,,:/home/dona:/bin/bash 
  */
 
-map_conf_t *
+static map_conf_t *
 read_conf()
 {
 	map_conf_t *conf;
-	FILE *fd;
+	static FILE *fd;
 	char buff[BUFSIZ];
 	char *b;
 	char *value;
@@ -157,7 +205,6 @@ read_conf()
 		free_conf(conf);
 		return NULL;
 	}
-
 	fclose(fd);
 
 	/* start reading configuration file */
@@ -241,7 +288,7 @@ read_conf()
 
 	*b = '\0';
 	b++;
-
+	
 	conf->pw_dir = strdup (value);
 
 	/* pw_shell takes the rest */  
@@ -257,17 +304,18 @@ read_conf()
 
 	return conf;
 
-format_error: 
+format_error:
 	free (conf);
 	return NULL;
 }
 
-/* fun: get_static buffer buflen len 
+
+/* fun: get_static buffer buflen len
  * txt: allocate some space from the nss static buffer. The buffer and
  * buflen are the pointers passed in by the C library to the
  * _nss_ntdom_* functions. This piece of code is taken from glibc.
  */
-static char * 
+static char *
 get_static(char **buffer, size_t *buflen, int len)
 {
 	char *result;
@@ -437,6 +485,323 @@ _nss_map_getspnam_r( const char *name, struct spwd *s,
 	s->sp_warn   = 7;
 
 	return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status
+_nss_map_getgrgid_r( gid_t gid, struct group *g,
+		char *buffer, size_t buflen, int *errnop)
+{
+	char * name;
+
+	/* XXX: The logname hack */
+	if ( (name = getenv("LOGNAME")) == NULL )
+		return NSS_STATUS_NOTFOUND;
+
+	if ((g->gr_name = get_static(&buffer, &buflen, strlen(name) + 1)) == NULL) {
+		return NSS_STATUS_TRYAGAIN;
+	}
+	strcpy(g->gr_name, name);
+
+	if ((g->gr_passwd = get_static(&buffer, &buflen, strlen("x") + 1)) == NULL) {
+		return NSS_STATUS_TRYAGAIN;
+	}
+
+	strcpy(g->gr_passwd, "x");
+
+	g->gr_gid = gid;
+	g->gr_mem = NULL;
+
+	return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status
+_nss_map_getgrnam_r( const char *name, struct group *g,
+		char *buffer, size_t buflen, int *errnop) {
+
+	map_conf_t *conf;
+
+	if ((conf = read_conf()) == NULL) {
+		return NSS_STATUS_NOTFOUND;
+	}
+
+	/* If out of memory */
+	if ((g->gr_name = get_static(&buffer, &buflen, strlen(name) + 1)) == NULL) {
+		return NSS_STATUS_TRYAGAIN;
+	}
+
+	/* gr_name stay as the name given */
+	strcpy(g->gr_name, name);
+
+	if ((g->gr_passwd = get_static(&buffer, &buflen, strlen("x") + 1)) == NULL) {
+		return NSS_STATUS_TRYAGAIN;
+	}
+
+	strcpy(g->gr_passwd, "x");
+
+	g->gr_gid = conf->pw_gid; /* GID_NUMBER; */
+
+	free_conf(conf);
+
+	return NSS_STATUS_SUCCESS;
+}
+
+static enum nss_status
+_nss_map_setgrent_locked()
+{
+	map_conf_t *conf;
+	char *dir;
+	struct stat s;
+	char *name;
+
+	conf = read_conf();
+
+	if (conf == NULL) {
+		DEBUG("%s:%d:setgrent_r:unable to open configuration file (%s).\n",
+				__FILE__, __LINE__, MAIN_CONF_FILE);
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	/* XXX: The logname hack */
+	if ( (name = getenv("LOGNAME")) == NULL )
+	{
+		DEBUG("%s:%d:setgrent_r:environment LOGNAME is not set.\n",
+				__FILE__, __LINE__);
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	if (( dir = (char *)malloc( (strlen(name) + 1 +
+						strlen(conf->pw_dir)  + 1 +
+						strlen(MAIN_CONF_FILE)) * sizeof(char) ) ) == NULL)
+	{
+		DEBUG("%s:%d:setgrent_r:unable to adquire memory for config.\n",
+				__FILE__, __LINE__);
+		return NSS_STATUS_TRYAGAIN;
+	}
+
+	strcpy(dir, conf->pw_dir);
+	strcat(dir,"/");
+	strcat(dir,name);
+	strcat(dir,"/");
+	strcat(dir,USER_CONF_FILE);
+
+	free_conf(conf);
+
+	/* some security checking */
+	if ( stat(dir, &s) == -1 )
+		goto format_error;
+
+	if ( ! S_ISREG(s.st_mode) )
+		goto format_error;
+
+	if ( (s.st_mode & S_IWGRP) || (s.st_mode & S_IWOTH) )
+		goto format_error;
+
+	if ( (s.st_uid) || (s.st_gid) )
+		goto format_error;
+
+	g_file = fopen(dir, "r");
+
+	if (g_file == NULL)
+		goto format_error;
+
+	return NSS_STATUS_SUCCESS;
+
+format_error:
+	if(g_file != NULL) fclose(g_file);
+	free(dir);
+    return NSS_STATUS_UNAVAIL;
+
+}
+
+enum nss_status
+_nss_map_setgrent (void) {
+	enum nss_status ret;
+
+	pthread_mutex_lock(&mutex);
+	ret = _nss_map_setgrent_locked();
+	pthread_mutex_unlock(&mutex);
+	return ret;
+}
+
+static enum nss_status
+_nss_map_endgrent_locked() {
+
+	if (g_file != NULL)
+	{
+		DEBUG("%s:%d:endgrent: closing user file (fileno: %d).\n",
+				__FILE__, __LINE__, fileno(g_file));
+		fclose(g_file);
+		g_file = NULL;
+	}
+	return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status
+_nss_map_endgrent()
+{
+  enum nss_status ret;
+
+  pthread_mutex_lock(&mutex);
+  ret = _nss_map_endgrent_locked();
+  pthread_mutex_unlock(&mutex);
+
+  return ret;
+}
+
+static enum nss_status
+_nss_map_getgrent_r_locked (struct group *g, char * buffer,
+		size_t buflen, int * errnop)
+{
+	enum nss_status ret = NSS_STATUS_NOTFOUND;
+	fpos_t position;
+
+	fgetpos(g_file, &position);
+	if ( fgetgrent_r(g_file, g, buffer, buflen, &g) == 0) {
+		DEBUG("%s:%d:getgrent_r: returning group %s (%d)\n",
+				__FILE__, __LINE__, g->gr_name, g->gr_gid);
+		ret = NSS_STATUS_SUCCESS;
+	} else {
+		switch(errno)
+		{
+			case ERANGE:
+				/* Rewind back to where we were just before, otherwise
+				 * the data read into the buffer is probably going to be
+				 * lost because there's no guarantee that the caller is
+				 * going to have preserved the line we just read. Note
+				 * that glibc's nss/nss_files/files-XXX.c does something
+				 * similar in CONCAT(_nss_files_get,ENTNAME_r) (around
+				 * line 242 in glibc 2.4 sources).
+				 */
+				fsetpos(g_file, &position);
+				*errnop = errno;
+				ret = _nss_map_ent_bad_return_code(*errnop); break;
+			case ENOENT:
+				/* XXX */
+				return NSS_STATUS_NOTFOUND; break;
+		}
+	}
+	return ret;
+}
+
+enum nss_status
+_nss_map_getgrent_r(struct group *g,
+		char *buffer, size_t buflen, int *errnop)
+{
+	enum nss_status ret;
+
+	pthread_mutex_lock(&mutex);
+	ret = _nss_map_getgrent_r_locked(g, buffer, buflen, errnop);
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
+}
+
+static int
+internal_gid_in_list (const gid_t *list, const gid_t g, long int len)
+{
+  while (len > 0)
+    {
+      if (*list == g)
+    return 1;
+      --len;
+      ++list;
+    }
+  return 0;
+}
+
+enum nss_status
+_nss_map_initgroups_dyn (const char *user, gid_t group, long int *start,
+		long int *size, gid_t **groupsp, long int limit, int *errnop)
+{
+	gid_t *groups = *groupsp;
+	FILE *fp = NULL;
+	map_conf_t *conf;
+	char *dir;
+	struct stat s;
+	struct group *g;
+
+	conf = read_conf();
+
+	if (conf == NULL) {
+		DEBUG("%s:%d:initgroups_dyn:unable to open configuration file (%s).\n",
+				__FILE__, __LINE__, MAIN_CONF_FILE);
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	if (( dir = (char *)malloc( (strlen(user) + 1 +
+						strlen(conf->pw_dir)  + 1 +
+						strlen(MAIN_CONF_FILE)) * sizeof(char) ) ) == NULL)
+	{
+		DEBUG("%s:%d:initgroups_dyn:unable to adquire memory for config.\n",
+				__FILE__, __LINE__);
+		return NSS_STATUS_TRYAGAIN;
+	}
+
+	strcpy(dir, conf->pw_dir);
+	strcat(dir,"/");
+	strcat(dir,user);
+	strcat(dir,"/");
+	strcat(dir,USER_CONF_FILE);
+	free_conf(conf);
+
+	/* some security checking */
+	if ( stat(dir, &s) == -1 )
+		goto format_error;
+
+	if ( ! S_ISREG(s.st_mode) )
+		goto format_error;
+
+	if ( (s.st_mode & S_IWGRP) || (s.st_mode & S_IWOTH) )
+		goto format_error;
+
+	if ( (s.st_uid) || (s.st_gid) )
+		goto format_error;
+
+	if ( (fp = fopen(dir, "r")) == NULL )
+		goto format_error;
+
+	if ( (g = fgetgrent(fp)) == NULL )
+		goto format_error;
+	else
+		fclose(fp);
+
+	if (!internal_gid_in_list (groups, group, *start))
+	{
+		if (__builtin_expect (*start == *size, 0))
+		{
+			/* Need a bigger buffer.  */
+			gid_t *newgroups;
+			long int newsize;
+
+			if (limit > 0 && *size == limit)
+				/* We reached the maximum.  */
+				goto done;
+
+			if (limit <= 0)
+				newsize = 2 * *size;
+			else
+				newsize = MIN (limit, 2 * *size);
+
+			newgroups = realloc (groups, newsize * sizeof (*groups));
+			if (newgroups == NULL)
+				goto done;
+			*groupsp = groups = newgroups;
+			*size = newsize;
+		}
+
+		groups[(*start)++] = group;
+	}
+
+	groups[(*start)++] = g->gr_gid;
+
+done:
+	return NSS_STATUS_SUCCESS;
+
+format_error:
+	if(fp != NULL) fclose(fp);
+	free(dir);
+    return NSS_STATUS_UNAVAIL;
+
 }
 
 
