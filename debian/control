@@ -1,0 +1,15 @@
+Source: libnss-map
+Section: net
+Priority: extra
+Maintainer: Andres J. Diaz <ajdiaz@connectical.com>
+Build-Depends: debhelper (>= 7.0.50~)
+Standards-Version: 3.8.4
+Homepage: http://github.com/ajdiaz/libnss_map
+#Vcs-Git: git://git.debian.org/collab-maint/libnss-map.git
+#Vcs-Browser: http://git.debian.org/?p=collab-maint/libnss-map.git;a=summary
+
+Package: libnss-map
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: A nss module which maps all users to one.
+  The libnss_map is a NSS module which allows to map a number of users to one.
