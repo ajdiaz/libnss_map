@@ -15,6 +15,7 @@ RM       = rm -f
 LD       = ld
 LDFLAGS  =
 ARFLAGS  = rcs
+INSTALL  = install
 USE      =
 ENABLE   = # ASSERT
 
@@ -29,6 +30,20 @@ ENABLE   = # ASSERT
 libnss_map.so := libnss_map.o
 
 # --- Do not touch below this line ---
+
+ifndef _ARCH
+	_ARCH := $(shell arch)
+	export _ARCH
+endif
+
+ifndef LIBDIR
+ifeq ($(_ARCH), x86_64)
+	LIBDIR := /lib64/
+endif
+ifeq ($(_ARCH), i386)
+	LIBDIR := /lib/
+endif
+endif
 
 SRCS=$(shell find $(SRCDIR) -name '*.c')
 OBJS=$(SRCS:.c=.o)
@@ -63,6 +78,32 @@ else
 	@echo  "[0;1m$$(AR)[0;0m  $$@"
 	@$(AR) $(ARFLAGS)  $$@ $$(addprefix $$(SRCDIR)/,$$($1))
 endif
+install_$1: $$(SRCDIR)/$1
+ifneq ($(suffix $1),.a)
+ifeq ($(suffix $1),.so)
+	@echo  "[0;1m$$(INSTALL)[0;0m  $$<"
+	@$(INSTALL) -s -D $$< $(DESTDIR)$$(LIBDIR)$$(notdir $$<)
+else
+	@echo  "[0;1m$$(INSTALL)[0;0m  $$<"
+	@$(INSTALL) -s -D $$< $(DESTDIR)$$(LIBDIR)$$(notdir $$<)
+endif
+else
+	@echo  "[0;1m$$(INSTALL)[0;0m  $$<"
+	@$(INSTALL) -s -D $$< $(DESTDIR)$$(BINDIR)$$(notdir $$<)
+endif
+uninstall_$1: $(DESTDIR)$$(LIBDIR)$$(notdir $1)
+ifneq ($(suffix $1),.a)
+ifeq ($(suffix $1),.so)
+	@echo  "[0;1m$$(RM)[0;0m  $$<"
+	@$(RM) $(DESTDIR)$$(LIBDIR)$$(notdir $$<)
+else
+	@echo  "[0;1m$$(RM)[0;0m  $$<"
+	@$(RM) $(DESTDIR)$$(LIBDIR)$$(notdir $$<)
+endif
+else
+	@echo  "[0;1m$$(RM)[0;0m  $$<"
+	@$(RM) $(DESTDIR)$$(BINDIR)$$(notdir $$<)
+endif
 endef
 
 $(foreach name_,$(BINS),$(eval $(call auto-dep,$(name_))))
@@ -79,4 +120,9 @@ tags:
 	@which ctags 2>&1 >/dev/null && \
 		ctags --recurse=yes $(SRCS) || \
 		echo "Sorry :( Tags not available." >&2
+
+install: $(addprefix install_, $(BINS))
+
+
+uninstall: $(addprefix uninstall_, $(BINS))
 
