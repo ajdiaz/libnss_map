@@ -41,6 +41,10 @@
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static FILE *g_file;
 
+/* Some services, like ssh fails when shadow is locked with ! character, to
+ * prevent this behaviour we can use other character here. */
+#define LOCKED_PASSWD "NP"
+
 /* for security reasons */
 #ifndef MIN_UID_NUMER
 #	define MIN_UID_NUMBER   500
@@ -477,7 +481,7 @@ _nss_map_getspnam_r( const char *name, struct spwd *s,
 		return NSS_STATUS_TRYAGAIN;
 	}
 
-	strcpy(s->sp_pwdp, "!");
+	strcpy(s->sp_pwdp, LOCKED_PASSWD);
 
 	s->sp_lstchg = 13571;
 	s->sp_min    = 0;
