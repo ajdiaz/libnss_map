@@ -1,0 +1,6 @@
+image: archlinux
+sources:
+  - https://git.sr.ht/~ajdiaz/libnss_map
+tasks:
+  - build: |
+      make -C libnss_map

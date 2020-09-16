@@ -32,7 +32,7 @@ libnss_map.so := libnss_map.o
 # --- Do not touch below this line ---
 
 ifndef _ARCH
-	_ARCH := $(shell arch)
+	_ARCH := $(shell uname -m)
 	export _ARCH
 endif
 
